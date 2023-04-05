@@ -21,9 +21,9 @@ cmake_minimum_required(VERSION 3.15)
 
 set(CMAKE_STANDARD 14)
 
-if(NOT MSVC)
-	set(CMAKE_CXX_COMPILER g++)
-endif()
+# if(NOT MSVC)
+# 	set(CMAKE_CXX_COMPILER g++)
+# endif()
 
 # Install nuget packages for dependencies.
 if (MSVC)
@@ -48,6 +48,7 @@ if (MSVC)
 endif()
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(${PROJECT_SOURCE_DIR}/vqf/include)
 
 # It's necessary to include tcmalloc headers only if calling into MallocExtension interface.
 # For using tcmalloc in DiskANN tools, it's enough to just link with tcmalloc.
@@ -240,6 +241,9 @@ else()
         add_compile_options(-fPIC)
     endif()
 endif()
+
+add_subdirectory(vqf)
+link_libraries(ProjectB)
 
 add_subdirectory(src)
 add_subdirectory(tests)

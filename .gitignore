@@ -168,7 +168,8 @@ DocProject/Help/html
 
 # Click-Once directory
 publish/
-
+siftsmall/
+rand_labels_50_10K.txt
 # Publish Web Output
 *.[Pp]ublish.xml
 *.azurePubxml
@@ -371,3 +372,5 @@ wheelhouse/*
 dist/*
 venv*/**
 *.swp
+/vqf/main_tx
+/siftsmall.tar.gz

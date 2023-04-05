@@ -22,7 +22,7 @@
 #define OVERHEAD_FACTOR 1.1
 #define EXPAND_IF_FULL 0
 #define DEFAULT_MAXC 750
-
+#include "vqf_filter.h"
 namespace diskann
 {
 
@@ -269,6 +269,10 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     // Acquire exclusive _update_lock and _tag_lock before calling.
     void resize(size_t new_max_points);
 
+    uint64_t get_hash(size_t max_points, T point_id, LabelT label);
+    void get_labels( T point_id, std::vector<LabelT> &tmp_labels);
+
+
     // Acquire unique lock on _update_lock, _consolidate_lock, _tag_lock
     // and _delete_lock before calling these functions.
     // Renumber nodes, update tag and location maps and compact the
@@ -348,6 +352,7 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
 
     bool _filtered_index = false;
     std::vector<std::vector<LabelT>> _pts_to_labels;
+    vqf_filter *_pts_to_labels_filter;
     tsl::robin_set<LabelT> _labels;
     std::string _labels_file;
     std::unordered_map<LabelT, _u32> _label_to_medoid_id;
