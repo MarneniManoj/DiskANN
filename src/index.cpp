@@ -19,7 +19,7 @@
 #include <xmmintrin.h>
 #endif
 #include "index.h"
-
+#include "gqf.h"
 #define MAX_POINTS_FOR_USING_BITSET 10000000
 
 namespace diskann
@@ -317,18 +317,25 @@ void Index<T, TagT, LabelT>::save(const char *filename, bool compact_before_save
                 universal_label_writer.close();
             }
 
-            if (_pts_to_labels.size() > 0)
+            if (_pts_to_labels_filter.metadata->nslots > 0)
             {
                 std::ofstream label_writer(std::string(filename) + "_labels.txt");
                 assert(label_writer.is_open());
-                for (_u32 i = 0; i < _pts_to_labels.size(); i++)
+                for (uint64_t i = 0; i < _nd; i++)
                 {
-                    for (_u32 j = 0; j < (_pts_to_labels[i].size() - 1); j++)
-                    {
-                        label_writer << _pts_to_labels[i][j] << ",";
+                    std::vector<LabelT> tmp_labels;
+                    get_labels(i, tmp_labels);
+
+                    uint32_t  j = 0;
+                    for(auto label : tmp_labels){
+                        if(j != tmp_labels.size()-1){
+                            label_writer << label << ",";
+                        }else{
+                            label_writer << label;
+                        }
+                        j++;
                     }
-                    if (_pts_to_labels[i].size() != 0)
-                        label_writer << _pts_to_labels[i][_pts_to_labels[i].size() - 1];
+
                     label_writer << std::endl;
                 }
                 label_writer.close();
@@ -968,7 +975,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
         if (use_filter)
         {
             std::vector<LabelT> common_filters;
-            auto &x = _pts_to_labels[id];
+            std::vector<LabelT> x;
+            get_labels(id, x);
             std::set_intersection(filter_label.begin(), filter_label.end(), x.begin(), x.end(),
                                   std::back_inserter(common_filters));
             if (_use_universal_label)
@@ -1043,7 +1051,8 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
                 {
                     // NOTE: NEED TO CHECK IF THIS CORRECT WITH NEW LOCKS.
                     std::vector<LabelT> common_filters;
-                    auto &x = _pts_to_labels[id];
+                    std::vector<LabelT> x;
+                    get_labels(id, x);
                     std::set_intersection(filter_label.begin(), filter_label.end(), x.begin(), x.end(),
                                           std::back_inserter(common_filters));
                     if (_use_universal_label)
@@ -1132,10 +1141,12 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, _u32 Linde
     else
     {
         std::vector<_u32> filter_specific_start_nodes;
-        for (auto &x : _pts_to_labels[location])
+        std::vector<LabelT> loc_labels;
+        get_labels(location, loc_labels);
+        for (auto &x : loc_labels)
             filter_specific_start_nodes.emplace_back(_label_to_medoid_id[x]);
         iterate_to_fixed_point(_data + _aligned_dim * location, filteredLindex, filter_specific_start_nodes, scratch,
-                               true, _pts_to_labels[location], false);
+                               true, loc_labels, false);
     }
 
     auto &pool = scratch->pool();
@@ -1218,9 +1229,15 @@ void Index<T, TagT, LabelT>::occlude_list(const unsigned location, std::vector<N
                 {
                     _u32 a = iter->id;
                     _u32 b = iter2->id;
-                    for (auto &x : _pts_to_labels[b])
+                    std::vector<LabelT> a_labels;
+                    std::vector<LabelT> b_labels;
+
+                    get_labels(a, a_labels);
+                    get_labels(b, b_labels);
+
+                    for (auto &x : b_labels)
                     {
-                        if (std::find(_pts_to_labels[a].begin(), _pts_to_labels[a].end(), x) == _pts_to_labels[a].end())
+                        if (std::find(a_labels.begin(), a_labels.end(), x) == a_labels.end())
                         {
                             prune_allowed = false;
                         }
@@ -1878,7 +1895,18 @@ LabelT Index<T, TagT, LabelT>::get_converted_label(const std::string &raw_label)
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, size_t &num_points)
 {
+
     // Format of Label txt file: filters with comma separators
+    // we need _nd * labelsize slots
+    uint64_t qbits = 18;
+    uint64_t val_bits = 6;
+    uint64_t  nslots = (1ULL << (qbits - 2));
+    printf("nslots = %ld, %ld, %ld", nslots, qbits, val_bits);
+    if (!qf_malloc(&_pts_to_labels_filter, nslots, qbits + val_bits, val_bits, QF_HASH_INVERTIBLE, 0))
+    {
+        fprintf(stderr, "Can't allocate vqf filter.");
+        exit(EXIT_FAILURE);
+    }
 
     std::ifstream infile(label_file);
     if (infile.fail())
@@ -1893,8 +1921,6 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
     {
         line_cnt++;
     }
-    _pts_to_labels.resize(line_cnt, std::vector<LabelT>());
-
     infile.clear();
     infile.seekg(0, std::ios::beg);
     line_cnt = 0;
@@ -1912,14 +1938,18 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
             LabelT token_as_num = std::stoul(token);
             lbls.push_back(token_as_num);
             _labels.insert(token_as_num);
+            int ret = qf_insert(&_pts_to_labels_filter, line_cnt , token_as_num, 1, QF_NO_LOCK);
+            if (ret < 0) {
+                fprintf(stderr, "failed insertion for key: %lx %d.\n", line_cnt, token_as_num);
+                if (ret == QF_NO_SPACE)
+                    fprintf(stderr, "CQF is full.\n");
+                else if (ret == QF_COULDNT_LOCK)
+                    fprintf(stderr, "TRY_ONCE_LOCK failed.\n");
+                else
+                    fprintf(stderr, "Does not recognise return value.\n");
+                abort();
+            }
         }
-        if (lbls.size() <= 0)
-        {
-            diskann::cout << "No label found";
-            exit(-1);
-        }
-        std::sort(lbls.begin(), lbls.end());
-        _pts_to_labels[line_cnt] = lbls;
         line_cnt++;
     }
     num_points = (size_t)line_cnt;
@@ -1957,12 +1987,13 @@ void Index<T, TagT, LabelT>::build_filtered_index(const char *filename, const st
         std::vector<_u32> labeled_points;
         for (_u32 point_id = 0; point_id < num_points_to_load; point_id++)
         {
-            bool pt_has_lbl = std::find(_pts_to_labels[point_id].begin(), _pts_to_labels[point_id].end(), x) !=
-                              _pts_to_labels[point_id].end();
-
+            bool  pt_has_lbl = false;
+            if(qf_count_key_value(&_pts_to_labels_filter,  point_id , x, QF_NO_LOCK) > 0)
+            {
+                pt_has_lbl = true;
+            }
             bool pt_has_univ_lbl =
-                (_use_universal_label && (std::find(_pts_to_labels[point_id].begin(), _pts_to_labels[point_id].end(),
-                                                    _universal_label) != _pts_to_labels[point_id].end()));
+                (_use_universal_label && (qf_count_key_value(&_pts_to_labels_filter,  point_id, _universal_label, QF_NO_LOCK) > 0));
 
             if (pt_has_lbl || pt_has_univ_lbl)
             {
@@ -2711,6 +2742,22 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
 
     reposition_points((_u32)_nd, (_u32)_max_points, (_u32)_num_frozen_pts);
     _start = (_u32)_max_points;
+}
+
+template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::get_labels( T point_id, std::vector<LabelT> &tmp_labels)
+{
+    QFi cfir;
+    qf_iterator_from_key_value(&_pts_to_labels_filter, &cfir, point_id, 0, QF_NO_LOCK);
+    do {
+        uint64_t key, value, count;
+        qfi_get_key(&cfir, &key, &value, &count);
+        qfi_next(&cfir);
+        if (key == point_id) {
+            tmp_labels.push_back(value);
+        } else {
+            break;
+        }
+    } while(!qfi_end(&cfir));
 }
 
 template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::resize(size_t new_max_points)
