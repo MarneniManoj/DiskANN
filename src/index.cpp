@@ -1898,7 +1898,7 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
 
     // Format of Label txt file: filters with comma separators
     // we need _nd * labelsize slots
-    uint64_t qbits = 18;
+    uint64_t qbits = 24;
     uint64_t val_bits = 6;
     uint64_t  nslots = (1ULL << (qbits - 2));
     printf("nslots = %ld, %ld, %ld", nslots, qbits, val_bits);
@@ -1907,6 +1907,7 @@ void Index<T, TagT, LabelT>::parse_label_file(const std::string &label_file, siz
         fprintf(stderr, "Can't allocate vqf filter.");
         exit(EXIT_FAILURE);
     }
+    qf_set_auto_resize(&_pts_to_labels_filter, false);
 
     std::ifstream infile(label_file);
     if (infile.fail())

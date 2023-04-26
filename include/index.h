@@ -351,10 +351,9 @@ template <typename T, typename TagT = uint32_t, typename LabelT = uint32_t> clas
     bool _enable_tags = false;
     bool _normalize_vecs = false; // Using normalied L2 for cosine.
 
-    // Filter Support
+    // Filter Support1
 
     bool _filtered_index = false;
-    std::vector<std::vector<LabelT>> _pts_to_labels;
     QF _pts_to_labels_filter;
     tsl::robin_set<LabelT> _labels;
     std::string _labels_file;
